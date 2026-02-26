@@ -1,0 +1,69 @@
+[package]
+name = "agent-io"
+version = "0.1.0"
+edition = "2024"
+description = "A Rust SDK for building AI agents with multi-provider LLM support"
+license = "Apache-2.0"
+keywords = ["ai", "agent", "llm", "openai", "anthropic", "gemini"]
+categories = ["api-bindings", "asynchronous"]
+
+[dependencies]
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+futures = "0.3"
+async-trait = "0.1"
+pin-project-lite = "0.2"
+
+# HTTP client
+reqwest = { version = "0.12", features = ["json", "stream", "rustls-tls"], default-features = false }
+reqwest-eventsource = "0.6"
+tower = { version = "0.5", features = ["retry", "timeout", "limit"] }
+tower-http = { version = "0.6", features = ["trace"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_with = "3"
+
+# Macros and reflection
+syn = { version = "2", features = ["full", "parsing", "printing"] }
+quote = "1"
+proc-macro2 = "1"
+
+# Error handling
+thiserror = "2"
+anyhow = "1"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Utils
+bytes = "1"
+tokio-stream = "0.1"
+derive_builder = "0.20"
+strum = { version = "0.26", features = ["derive"] }
+once_cell = "1"
+secrecy = { version = "0.10", features = ["serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1", features = ["v4"] }
+async-stream = "0.3"
+dirs = "5"
+
+[lib]
+name = "agent_io"
+path = "src/lib.rs"
+
+[features]
+default = []
+# Provider features
+openai = []
+anthropic = []
+google = []
+# Full feature set
+full = ["openai", "anthropic", "google"]
+
+[dev-dependencies]
+tokio-test = "0.4"
+wiremock = "0.6"
+tracing-subscriber = "0.3"
