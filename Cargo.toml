@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 description = "A Rust SDK for building AI agents with multi-provider LLM support"
 license = "Apache-2.0"
-keywords = ["ai", "agent", "llm", "openai", "anthropic", "gemini"]
+keywords = ["ai", "agent", "llm", "sdk", "multi-provider"]
 categories = ["api-bindings", "asynchronous"]
 
 [dependencies]
