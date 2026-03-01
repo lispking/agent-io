@@ -31,12 +31,14 @@
 
 pub mod agent;
 pub mod llm;
+pub mod memory;
 pub mod observability;
 pub mod tokens;
 pub mod tools;
 
 pub use agent::{Agent, AgentEvent};
 pub use llm::BaseChatModel;
+pub use memory::{EmbeddingProvider, InMemoryStore, MemoryManager, MemoryStore};
 pub use observability::*;
 pub use tokens::TokenCost;
 pub use tools::Tool;

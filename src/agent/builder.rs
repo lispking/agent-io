@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use crate::Result;
 use crate::llm::BaseChatModel;
+use crate::memory::MemoryManager;
 use crate::tools::Tool;
 
 use super::config::{AgentConfig, EphemeralConfig};
@@ -15,7 +16,10 @@ pub struct AgentBuilder {
     llm: Option<Arc<dyn BaseChatModel>>,
     tools: Vec<Arc<dyn Tool>>,
     config: Option<AgentConfig>,
+    memory: Option<Arc<RwLock<MemoryManager>>>,
 }
+
+use tokio::sync::RwLock;
 
 impl AgentBuilder {
     pub fn with_llm(mut self, llm: Arc<dyn BaseChatModel>) -> Self {
@@ -52,6 +56,12 @@ impl AgentBuilder {
         self
     }
 
+    /// Add memory manager to the agent
+    pub fn with_memory(mut self, memory: Arc<RwLock<MemoryManager>>) -> Self {
+        self.memory = Some(memory);
+        self
+    }
+
     pub fn build(self) -> Result<Agent> {
         let llm = self
             .llm
@@ -81,6 +91,7 @@ impl AgentBuilder {
             self.tools,
             self.config.unwrap_or_default(),
             ephemeral_config,
+            self.memory,
         ))
     }
 }

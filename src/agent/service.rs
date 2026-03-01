@@ -13,6 +13,7 @@ use crate::agent::{
 use crate::llm::{
     AssistantMessage, BaseChatModel, ChatCompletion, Message, ToolDefinition, ToolMessage,
 };
+use crate::memory::{MemoryManager, MemoryType};
 use crate::tools::Tool;
 use crate::{Error, Result};
 
@@ -33,6 +34,8 @@ pub struct Agent {
     usage: Arc<RwLock<UsageSummary>>,
     /// Ephemeral config per tool name
     ephemeral_config: HashMap<String, EphemeralConfig>,
+    /// Memory manager (optional)
+    memory: Option<Arc<RwLock<MemoryManager>>>,
 }
 
 impl Agent {
@@ -63,6 +66,7 @@ impl Agent {
             history: Arc::new(RwLock::new(Vec::new())),
             usage: Arc::new(RwLock::new(UsageSummary::new())),
             ephemeral_config,
+            memory: None,
         }
     }
 
@@ -83,6 +87,7 @@ impl Agent {
         tools: Vec<Arc<dyn Tool>>,
         config: AgentConfig,
         ephemeral_config: HashMap<String, EphemeralConfig>,
+        memory: Option<Arc<RwLock<MemoryManager>>>,
     ) -> Self {
         Self {
             llm,
@@ -91,6 +96,7 @@ impl Agent {
             history: Arc::new(RwLock::new(Vec::new())),
             usage: Arc::new(RwLock::new(UsageSummary::new())),
             ephemeral_config,
+            memory,
         }
     }
 
@@ -113,6 +119,40 @@ impl Agent {
         }
 
         Err(Error::Agent("No final response received".into()))
+    }
+
+    /// Query with memory context
+    pub async fn query_with_memory(&self, message: impl Into<String>) -> Result<String> {
+        let message = message.into();
+
+        // Recall relevant memories
+        let context = if let Some(memory) = &self.memory {
+            let mem = memory.read().await;
+            mem.recall_context(&message).await?
+        } else {
+            String::new()
+        };
+
+        // Build enhanced prompt with memory context
+        let enhanced_message = if context.is_empty() {
+            message.clone()
+        } else {
+            format!(
+                "Relevant context from memory:\n{}\n\nUser query: {}",
+                context, message
+            )
+        };
+
+        // Execute query
+        let result = self.query(enhanced_message).await?;
+
+        // Store this interaction in memory
+        if let Some(memory) = &self.memory {
+            let mut mem = memory.write().await;
+            mem.remember(&message, MemoryType::ShortTerm).await?;
+        }
+
+        Ok(result)
     }
 
     /// Query the agent with streaming events
@@ -376,5 +416,15 @@ impl Agent {
     /// Get current history
     pub async fn get_history(&self) -> Vec<Message> {
         self.history.read().await.clone()
+    }
+
+    /// Check if memory is enabled
+    pub fn has_memory(&self) -> bool {
+        self.memory.is_some()
+    }
+
+    /// Get memory manager reference
+    pub fn get_memory(&self) -> Option<&Arc<RwLock<MemoryManager>>> {
+        self.memory.as_ref()
     }
 }

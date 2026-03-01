@@ -50,6 +50,9 @@ uuid = { version = "1", features = ["v4"] }
 async-stream = "0.3"
 dirs = "5"
 
+# Storage
+rusqlite = { version = "0.32", features = ["bundled"] }
+
 [lib]
 name = "agent_io"
 path = "src/lib.rs"
