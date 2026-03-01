@@ -20,7 +20,7 @@ pub use google::ChatGoogle;
 pub use groq::ChatGroq;
 pub use mistral::ChatMistral;
 pub use ollama::ChatOllama;
-pub use openai::ChatOpenAI;
+pub use openai::{ChatOpenAI, ReasoningEffort};
 pub use openai_compatible::ChatOpenAICompatible;
 pub use openrouter::ChatOpenRouter;
 pub use schema::SchemaOptimizer;

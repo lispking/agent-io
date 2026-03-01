@@ -3,7 +3,6 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use derive_builder::Builder;
 use futures::{Stream, StreamExt};
 use tokio::sync::RwLock;
 use tracing::debug;
@@ -11,67 +10,14 @@ use tracing::debug;
 use crate::agent::{
     AgentEvent, ErrorEvent, FinalResponseEvent, StepCompleteEvent, StepStartEvent, UsageSummary,
 };
-use crate::llm::{BaseChatModel, ChatCompletion, Message, ToolChoice, ToolDefinition, ToolMessage};
+use crate::llm::{
+    AssistantMessage, BaseChatModel, ChatCompletion, Message, ToolDefinition, ToolMessage,
+};
 use crate::tools::Tool;
 use crate::{Error, Result};
 
-/// Default maximum iterations
-pub const DEFAULT_MAX_ITERATIONS: usize = 200;
-
-/// Agent configuration
-#[derive(Builder, Clone)]
-#[builder(pattern = "owned")]
-pub struct AgentConfig {
-    /// System prompt
-    #[builder(setter(into, strip_option), default = "None")]
-    pub system_prompt: Option<String>,
-
-    /// Maximum iterations before stopping
-    #[builder(default = "DEFAULT_MAX_ITERATIONS")]
-    pub max_iterations: usize,
-
-    /// Tool choice strategy
-    #[builder(default = "ToolChoice::Auto")]
-    pub tool_choice: ToolChoice,
-
-    /// Enable context compaction
-    #[builder(default = "false")]
-    pub enable_compaction: bool,
-
-    /// Compaction threshold (ratio of context window)
-    #[builder(default = "0.80")]
-    pub compaction_threshold: f32,
-
-    /// Enable cost tracking
-    #[builder(default = "false")]
-    pub include_cost: bool,
-}
-
-impl Default for AgentConfig {
-    fn default() -> Self {
-        Self {
-            system_prompt: None,
-            max_iterations: DEFAULT_MAX_ITERATIONS,
-            tool_choice: ToolChoice::Auto,
-            enable_compaction: false,
-            compaction_threshold: 0.80,
-            include_cost: false,
-        }
-    }
-}
-
-/// Ephemeral message configuration per tool
-#[derive(Debug, Clone, Copy)]
-pub struct EphemeralConfig {
-    /// How many outputs to keep (None = not ephemeral)
-    pub keep_count: usize,
-}
-
-impl Default for EphemeralConfig {
-    fn default() -> Self {
-        Self { keep_count: 1 }
-    }
-}
+use super::builder::AgentBuilder;
+use super::config::{AgentConfig, EphemeralConfig};
 
 /// Agent - the main orchestrator for LLM interactions
 pub struct Agent {
@@ -129,6 +75,23 @@ impl Agent {
     pub fn with_config(mut self, config: AgentConfig) -> Self {
         self.config = config;
         self
+    }
+
+    /// Create agent with all components (used by builder)
+    pub(super) fn new_with_config(
+        llm: Arc<dyn BaseChatModel>,
+        tools: Vec<Arc<dyn Tool>>,
+        config: AgentConfig,
+        ephemeral_config: HashMap<String, EphemeralConfig>,
+    ) -> Self {
+        Self {
+            llm,
+            tools,
+            config,
+            history: Arc::new(RwLock::new(Vec::new())),
+            usage: Arc::new(RwLock::new(UsageSummary::new())),
+            ephemeral_config,
+        }
     }
 
     /// Query the agent synchronously (returns final response)
@@ -239,7 +202,7 @@ impl Agent {
                     // Add assistant message to history
                     {
                         let mut h = self.history.write().await;
-                        h.push(Message::Assistant(crate::llm::AssistantMessage {
+                        h.push(Message::Assistant(AssistantMessage {
                             role: "assistant".to_string(),
                             content: completion.content.clone(),
                             thinking: completion.thinking.clone(),
@@ -259,7 +222,7 @@ impl Agent {
                         let result = if let Some(t) = tool {
                             let args: serde_json::Value = serde_json::from_str(&tool_call.function.arguments)
                                 .unwrap_or(serde_json::json!({}));
-                            t.execute(args, None).await
+                            t.execute(args).await
                         } else {
                             Ok(crate::tools::ToolResult::new(&tool_call.id, format!("Unknown tool: {}", tool_call.function.name)))
                         };
@@ -314,7 +277,7 @@ impl Agent {
         llm: &dyn BaseChatModel,
         messages: Vec<Message>,
         tools: Option<Vec<ToolDefinition>>,
-        tool_choice: Option<ToolChoice>,
+        tool_choice: Option<crate::llm::ToolChoice>,
     ) -> Result<ChatCompletion> {
         let max_retries = 3;
         let mut delay = std::time::Duration::from_millis(100);
@@ -342,8 +305,6 @@ impl Agent {
     }
 
     /// Destroy old ephemeral message content, keeping the last N per tool.
-    ///
-    /// This should be called before each LLM invocation to manage context size.
     fn destroy_ephemeral_messages(
         history: &mut [Message],
         ephemeral_config: &HashMap<String, EphemeralConfig>,
@@ -415,83 +376,5 @@ impl Agent {
     /// Get current history
     pub async fn get_history(&self) -> Vec<Message> {
         self.history.read().await.clone()
-    }
-}
-
-/// Agent builder
-#[derive(Default)]
-pub struct AgentBuilder {
-    llm: Option<Arc<dyn BaseChatModel>>,
-    tools: Vec<Arc<dyn Tool>>,
-    config: Option<AgentConfig>,
-}
-
-impl AgentBuilder {
-    pub fn with_llm(mut self, llm: Arc<dyn BaseChatModel>) -> Self {
-        self.llm = Some(llm);
-        self
-    }
-
-    pub fn tool(mut self, tool: Arc<dyn Tool>) -> Self {
-        self.tools.push(tool);
-        self
-    }
-
-    pub fn tools(mut self, tools: Vec<Arc<dyn Tool>>) -> Self {
-        self.tools = tools;
-        self
-    }
-
-    pub fn config(mut self, config: AgentConfig) -> Self {
-        self.config = Some(config);
-        self
-    }
-
-    pub fn system_prompt(mut self, prompt: impl Into<String>) -> Self {
-        let mut config = self.config.unwrap_or_default();
-        config.system_prompt = Some(prompt.into());
-        self.config = Some(config);
-        self
-    }
-
-    pub fn max_iterations(mut self, max: usize) -> Self {
-        let mut config = self.config.unwrap_or_default();
-        config.max_iterations = max;
-        self.config = Some(config);
-        self
-    }
-
-    pub fn build(self) -> Result<Agent> {
-        let llm = self
-            .llm
-            .ok_or_else(|| Error::Config("LLM is required".into()))?;
-
-        // Build ephemeral config from tools
-        let ephemeral_config = self
-            .tools
-            .iter()
-            .filter_map(|t| {
-                let cfg = t.ephemeral();
-                if cfg != crate::tools::EphemeralConfig::None {
-                    let keep_count = match cfg {
-                        crate::tools::EphemeralConfig::Single => 1,
-                        crate::tools::EphemeralConfig::Count(n) => n,
-                        crate::tools::EphemeralConfig::None => 0,
-                    };
-                    Some((t.name().to_string(), EphemeralConfig { keep_count }))
-                } else {
-                    None
-                }
-            })
-            .collect();
-
-        Ok(Agent {
-            llm,
-            tools: self.tools,
-            config: self.config.unwrap_or_default(),
-            history: Arc::new(RwLock::new(Vec::new())),
-            usage: Arc::new(RwLock::new(UsageSummary::new())),
-            ephemeral_config,
-        })
     }
 }

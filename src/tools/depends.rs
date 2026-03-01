@@ -79,31 +79,6 @@ impl DependencyContainer {
     }
 }
 
-/// Wrapper for dependency overrides
-#[derive(Default)]
-pub struct DependencyOverrides {
-    inner: HashMap<String, Box<dyn Any + Send + Sync>>,
-}
-
-impl DependencyOverrides {
-    pub fn new() -> Self {
-        Self {
-            inner: HashMap::new(),
-        }
-    }
-
-    pub fn insert<T: 'static + Send + Sync>(&mut self, key: &str, value: T) {
-        self.inner.insert(key.to_string(), Box::new(value));
-    }
-
-    pub fn get<T: 'static + Clone + Send + Sync>(&self, key: &str) -> Option<T> {
-        self.inner
-            .get(key)
-            .and_then(|v| v.downcast_ref::<T>())
-            .cloned()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
