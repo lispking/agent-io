@@ -6,17 +6,20 @@
 //! Or with specific provider:
 //!   cargo run --example multi_provider --features openai
 
-#[cfg(feature = "openai")]
+#[cfg(any(feature = "openai", feature = "anthropic", feature = "google"))]
 use std::sync::Arc;
 
+#[cfg(any(feature = "openai", feature = "anthropic", feature = "google"))]
+use agent_io::Agent;
+
 #[cfg(feature = "openai")]
-use agent_io::{Agent, llm::ChatOpenAI};
+use agent_io::llm::ChatOpenAI;
 
 #[cfg(feature = "anthropic")]
-use agent_io::{Agent, llm::ChatAnthropic};
+use agent_io::llm::ChatAnthropic;
 
 #[cfg(feature = "google")]
-use agent_io::{Agent, llm::ChatGoogle};
+use agent_io::llm::ChatGoogle;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
