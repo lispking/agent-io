@@ -1,6 +1,10 @@
 # Agent IO
 
-[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
+[![Crates.io](https://img.shields.io/crates/v/agent-io.svg)](https://crates.io/crates/agent-io)
+[![Documentation](https://docs.rs/agent-io/badge.svg)](https://docs.rs/agent-io)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache2.0-yellow.svg)](https://opensource.org/license/apache-2-0)
+[<img alt="build status" src="https://img.shields.io/github/actions/workflow/status/lispking/agent-io/ci.yml?branch=main&style=for-the-badge" height="20">](https://github.com/lispking/agent-io/actions?query=branch%3Amain)
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/lispking/agent-io)
 
 A Rust SDK for building AI agents with multi-provider LLM support.
 
