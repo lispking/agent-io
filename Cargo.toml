@@ -51,7 +51,10 @@ async-stream = "0.3"
 dirs = "5"
 
 # Storage
-rusqlite = { version = "0.32", features = ["bundled"] }
+lancedb = "0.26"
+arrow = "57"
+arrow-array = "57"
+arrow-schema = "57"
 
 [lib]
 name = "agent_io"

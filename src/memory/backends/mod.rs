@@ -1,4 +1,4 @@
 //! Backends module
 
 pub mod in_memory;
-pub mod sqlite;
+pub mod lancedb;

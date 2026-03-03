@@ -9,7 +9,7 @@ mod ranker;
 mod store;
 
 pub use backends::in_memory::InMemoryStore;
-pub use backends::sqlite::SqliteStore;
+pub use backends::lancedb::LanceDbStore;
 pub use buffer::RingBuffer;
 pub use embeddings::{EmbeddingProvider, MockEmbedding, OpenAIEmbedding};
 pub use entry::{MemoryEntry, MemoryType};
