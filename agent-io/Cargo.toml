@@ -1,6 +1,6 @@
 [package]
 name = "agent-io"
-version = "0.3.1"
+version = "0.3.2"
 edition = "2024"
 description = "A Rust SDK for building AI agents with multi-provider LLM support"
 license = "Apache-2.0"
