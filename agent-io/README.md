@@ -23,7 +23,7 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-agent-io = "0.1"
+agent-io = "0.3"
 tokio = { version = "1", features = ["full"] }
 ```
 
@@ -193,7 +193,7 @@ let llm = ChatOpenAICompatible::new("your-model")
 
 ```toml
 [dependencies.agent-io]
-version = "0.1"
+version = "0.3"
 features = ["openai", "anthropic", "google"]
 # Or use "full" to enable all major providers
 features = ["full"]
