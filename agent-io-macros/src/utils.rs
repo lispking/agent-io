@@ -1,6 +1,7 @@
 //! Shared utility functions.
 
-use syn::Type;
+use serde_json::{Map, Value, json};
+use syn::{GenericArgument, PathArguments, Type};
 
 /// Extract concatenated `///` doc comments from an attribute list.
 pub fn extract_doc(attrs: &[syn::Attribute]) -> String {
@@ -22,29 +23,69 @@ pub fn extract_doc(attrs: &[syn::Attribute]) -> String {
         .join(" ")
 }
 
-/// Map a Rust type to its JSON Schema `type` string.
-///
-/// | Rust type | JSON Schema |
-/// |-----------|-------------|
-/// | `String` / `str` | `"string"` |
-/// | `bool` | `"boolean"` |
-/// | `f32` / `f64` | `"number"` |
-/// | integer types | `"integer"` |
-/// | anything else | `"string"` |
-pub fn rust_type_to_json_schema(ty: &Type) -> &'static str {
-    if let Type::Path(tp) = ty
-        && let Some(seg) = tp.path.segments.last()
-    {
-        return match seg.ident.to_string().as_str() {
-            "String" | "str" => "string",
-            "bool" => "boolean",
-            "f32" | "f64" => "number",
-            "i8" | "i16" | "i32" | "i64" | "i128" | "isize" | "u8" | "u16" | "u32" | "u64"
-            | "u128" | "usize" => "integer",
-            _ => "string",
-        };
+fn path_segment_ident(ty: &Type) -> Option<String> {
+    if let Type::Path(tp) = ty {
+        tp.path.segments.last().map(|seg| seg.ident.to_string())
+    } else {
+        None
     }
-    "string"
+}
+
+fn first_generic_type(ty: &Type) -> Option<&Type> {
+    let Type::Path(tp) = ty else {
+        return None;
+    };
+    let seg = tp.path.segments.last()?;
+    let PathArguments::AngleBracketed(args) = &seg.arguments else {
+        return None;
+    };
+    args.args.iter().find_map(|arg| match arg {
+        GenericArgument::Type(inner) => Some(inner),
+        _ => None,
+    })
+}
+
+pub fn is_optional_type(ty: &Type) -> bool {
+    matches!(path_segment_ident(ty).as_deref(), Some("Option"))
+}
+
+pub fn json_schema_for_type(ty: &Type) -> Value {
+    if is_optional_type(ty) {
+        return first_generic_type(ty)
+            .map(json_schema_for_type)
+            .unwrap_or_else(|| json!({ "type": "string" }));
+    }
+
+    if matches!(path_segment_ident(ty).as_deref(), Some("Vec")) {
+        let items = first_generic_type(ty)
+            .map(json_schema_for_type)
+            .unwrap_or_else(|| json!({ "type": "string" }));
+        return json!({
+            "type": "array",
+            "items": items,
+        });
+    }
+
+    let schema_type = match path_segment_ident(ty).as_deref() {
+        Some("String") | Some("str") => "string",
+        Some("bool") => "boolean",
+        Some("f32") | Some("f64") => "number",
+        Some("i8") | Some("i16") | Some("i32") | Some("i64") | Some("i128") | Some("isize")
+        | Some("u8") | Some("u16") | Some("u32") | Some("u64") | Some("u128") | Some("usize") => {
+            "integer"
+        }
+        _ => "string",
+    };
+
+    json!({ "type": schema_type })
+}
+
+pub fn object_schema(properties: Map<String, Value>, required: Vec<String>) -> Value {
+    json!({
+        "type": "object",
+        "properties": properties,
+        "required": required,
+    })
 }
 
 /// Convert `snake_case` to `PascalCase`.

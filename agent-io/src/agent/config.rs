@@ -1,8 +1,12 @@
 //! Agent configuration types
 
+use std::collections::HashMap;
+use std::sync::Arc;
+
 use derive_builder::Builder;
 
 use crate::llm::ToolChoice;
+use crate::tools::{EphemeralConfig as ToolEphemeralConfig, Tool};
 
 /// Default maximum iterations
 pub const DEFAULT_MAX_ITERATIONS: usize = 200;
@@ -60,4 +64,18 @@ impl Default for EphemeralConfig {
     fn default() -> Self {
         Self { keep_count: 1 }
     }
+}
+
+pub(crate) fn build_ephemeral_config(tools: &[Arc<dyn Tool>]) -> HashMap<String, EphemeralConfig> {
+    tools
+        .iter()
+        .filter_map(|tool| {
+            let keep_count = match tool.ephemeral() {
+                ToolEphemeralConfig::None => return None,
+                ToolEphemeralConfig::Single => 1,
+                ToolEphemeralConfig::Count(count) => count,
+            };
+            Some((tool.name().to_string(), EphemeralConfig { keep_count }))
+        })
+        .collect()
 }

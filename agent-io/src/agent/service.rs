@@ -18,7 +18,7 @@ use crate::tools::Tool;
 use crate::{Error, Result};
 
 use super::builder::AgentBuilder;
-use super::config::{AgentConfig, EphemeralConfig};
+use super::config::{AgentConfig, EphemeralConfig, build_ephemeral_config};
 
 /// Agent - the main orchestrator for LLM interactions
 pub struct Agent {
@@ -41,23 +41,7 @@ pub struct Agent {
 impl Agent {
     /// Create a new agent
     pub fn new(llm: Arc<dyn BaseChatModel>, tools: Vec<Arc<dyn Tool>>) -> Self {
-        // Build ephemeral config from tools
-        let ephemeral_config = tools
-            .iter()
-            .filter_map(|t| {
-                let cfg = t.ephemeral();
-                if cfg != crate::tools::EphemeralConfig::None {
-                    let keep_count = match cfg {
-                        crate::tools::EphemeralConfig::Single => 1,
-                        crate::tools::EphemeralConfig::Count(n) => n,
-                        crate::tools::EphemeralConfig::None => 0,
-                    };
-                    Some((t.name().to_string(), EphemeralConfig { keep_count }))
-                } else {
-                    None
-                }
-            })
-            .collect();
+        let ephemeral_config = build_ephemeral_config(&tools);
 
         Self {
             llm,
@@ -124,35 +108,27 @@ impl Agent {
     /// Query with memory context
     pub async fn query_with_memory(&self, message: impl Into<String>) -> Result<String> {
         let message = message.into();
+        let context = self.recall_memory_context(&message).await?;
 
-        // Recall relevant memories
-        let context = if let Some(memory) = &self.memory {
-            let mem = memory.read().await;
-            mem.recall_context(&message).await?
-        } else {
-            String::new()
-        };
-
-        // Build enhanced prompt with memory context
-        let enhanced_message = if context.is_empty() {
-            message.clone()
-        } else {
-            format!(
-                "Relevant context from memory:\n{}\n\nUser query: {}",
-                context, message
-            )
-        };
-
-        // Execute query
-        let result = self.query(enhanced_message).await?;
-
-        // Store this interaction in memory
-        if let Some(memory) = &self.memory {
-            let mut mem = memory.write().await;
-            mem.remember(&message, MemoryType::ShortTerm).await?;
+        {
+            let mut history = self.history.write().await;
+            if let Some(context_message) = self.memory_context_message(context) {
+                history.push(context_message);
+            }
+            history.push(Message::user(message.clone()));
         }
 
-        Ok(result)
+        let stream = self.execute_loop();
+        futures::pin_mut!(stream);
+
+        while let Some(event) = stream.next().await {
+            if let AgentEvent::FinalResponse(response) = event {
+                self.remember_short_term(&message).await?;
+                return Ok(response.content);
+            }
+        }
+
+        Err(Error::Agent("No final response received".into()))
     }
 
     /// Query the agent with streaming events
@@ -167,6 +143,45 @@ impl Agent {
         }
 
         Ok(self.execute_loop())
+    }
+
+    async fn recall_memory_context(&self, message: &str) -> Result<String> {
+        if let Some(memory) = &self.memory {
+            let mem = memory.read().await;
+            mem.recall_context(message).await
+        } else {
+            Ok(String::new())
+        }
+    }
+
+    fn memory_context_message(&self, context: String) -> Option<Message> {
+        if context.is_empty() {
+            None
+        } else {
+            Some(Message::developer(format!(
+                "Relevant memory context:\n{}",
+                context
+            )))
+        }
+    }
+
+    async fn remember_short_term(&self, message: &str) -> Result<()> {
+        if let Some(memory) = &self.memory {
+            let mut mem = memory.write().await;
+            mem.remember(message, MemoryType::ShortTerm).await?;
+        }
+        Ok(())
+    }
+
+    async fn build_request_messages(&self) -> Vec<Message> {
+        let history = self.history.read().await;
+        let mut messages =
+            Vec::with_capacity(history.len() + usize::from(self.config.system_prompt.is_some()));
+        if let Some(ref prompt) = self.config.system_prompt {
+            messages.push(Message::system(prompt));
+        }
+        messages.extend(history.iter().cloned());
+        messages
     }
 
     /// Main execution loop
@@ -188,30 +203,21 @@ impl Agent {
                     Self::destroy_ephemeral_messages(&mut h, &self.ephemeral_config);
                 }
 
-                // Get current history
-                let messages = {
-                    let h = self.history.read().await;
-                    h.clone()
-                };
-
-                // Build system prompt + messages
-                let mut full_messages = Vec::new();
-                if let Some(ref prompt) = self.config.system_prompt {
-                    full_messages.push(Message::system(prompt));
-                }
-                full_messages.extend(messages);
+                let full_messages = self.build_request_messages().await;
 
                 // Build tool definitions
                 let tool_defs: Vec<ToolDefinition> = self.tools.iter()
                     .map(|t| t.definition())
                     .collect();
+                let tool_defs = if tool_defs.is_empty() { None } else { Some(tool_defs) };
+                let tool_choice = self.config.tool_choice.clone();
 
                 // Call LLM with retry
                 let completion = match Self::call_llm_with_retry(
                     self.llm.as_ref(),
-                    full_messages.clone(),
-                    if tool_defs.is_empty() { None } else { Some(tool_defs) },
-                    Some(self.config.tool_choice.clone()),
+                    &full_messages,
+                    tool_defs.as_deref(),
+                    Some(&tool_choice),
                 ).await {
                     Ok(c) => c,
                     Err(e) => {
@@ -314,16 +320,20 @@ impl Agent {
     /// Call LLM with exponential backoff retry
     async fn call_llm_with_retry(
         llm: &dyn BaseChatModel,
-        messages: Vec<Message>,
-        tools: Option<Vec<ToolDefinition>>,
-        tool_choice: Option<crate::llm::ToolChoice>,
+        messages: &[Message],
+        tools: Option<&[ToolDefinition]>,
+        tool_choice: Option<&crate::llm::ToolChoice>,
     ) -> Result<ChatCompletion> {
         let max_retries = 10;
         let mut delay = std::time::Duration::from_millis(500);
 
         for attempt in 0..=max_retries {
+            let request_messages = messages.to_vec();
+            let request_tools = tools.map(|value| value.to_vec());
+            let request_tool_choice = tool_choice.cloned();
+
             match llm
-                .invoke(messages.clone(), tools.clone(), tool_choice.clone())
+                .invoke(request_messages, request_tools, request_tool_choice)
                 .await
             {
                 Ok(completion) => return Ok(completion),

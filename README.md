@@ -16,14 +16,20 @@ A Rust SDK for building AI agents with multi-provider LLM support.
 - **Context compaction**: Automatic management of long conversation context
 - **Token tracking**: Usage tracking and cost calculation across providers
 - **Retry mechanism**: Built-in exponential backoff retry for rate limit handling
-- **Memory system**: Pluggable memory backends (in-memory, LanceDB vector store)
+- **Memory system**: In-memory memory by default, with optional LanceDB persistence via feature flag
 
 ## Installation
 
 ```toml
 [dependencies]
-agent-io = "0.3"
+agent-io = { version = "0.3", features = ["openai"] }
 tokio = { version = "1", features = ["full"] }
+```
+
+Enable `memory-lancedb` only if you need persistent vector-backed memory:
+
+```toml
+agent-io = { version = "0.3", features = ["openai", "memory-lancedb"] }
 ```
 
 ## Quick Start
@@ -102,7 +108,7 @@ use serde::Deserialize;
 #[derive(Deserialize)]
 struct WeatherArgs { location: String }
 
-let tool: Box<dyn Tool> = ToolBuilder::new("get_weather")
+let tool: Arc<dyn Tool> = ToolBuilder::new("get_weather")
     .description("Get weather for a location")
     .string_param("location", "The city name")
     .build(|args: WeatherArgs| Box::pin(async move {
@@ -130,8 +136,10 @@ let tool: Box<dyn Tool> = ToolBuilder::new("get_weather")
 [dependencies.agent-io]
 version = "0.3"
 features = ["openai", "anthropic", "google"]
-# Or enable all:
-features = ["full"]
+# Optional persistent memory backend
+# features = ["openai", "memory-lancedb"]
+# Or enable the bundled provider set:
+# features = ["full"]
 ```
 
 ## Examples

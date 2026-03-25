@@ -10,7 +10,7 @@ use syn::{ItemFn, LitStr};
 use crate::{
     attr::ToolAttr,
     params::{collect_params, validate_async, validate_return_type},
-    utils::{extract_doc, rust_type_to_json_schema, to_pascal_case},
+    utils::{extract_doc, json_schema_for_type, object_schema, to_pascal_case},
 };
 
 pub fn expand_tool(attr: ToolAttr, input: ItemFn) -> syn::Result<TokenStream2> {
@@ -36,29 +36,27 @@ pub fn expand_tool(attr: ToolAttr, input: ItemFn) -> syn::Result<TokenStream2> {
     let tool_struct = quote::format_ident!("__ToolImpl_{}", pascal);
     let args_struct = quote::format_ident!("__ToolArgs_{}", pascal);
 
-    // Schema property entries
-    let schema_entries = params.iter().map(|p| {
-        let name = &p.name;
-        let desc = attr
-            .descriptions
-            .get(&p.name)
-            .cloned()
-            .unwrap_or_else(|| p.name.clone());
-        let type_str = rust_type_to_json_schema(&p.ty);
-        quote! {
-            __map.insert(
-                #name.to_string(),
-                ::agent_io::__macro_support::serde_json::json!({
-                    "type": #type_str,
-                    "description": #desc
-                })
-            );
-        }
-    });
-
-    let required_names: Vec<LitStr> = params
+    let schema_properties = params
         .iter()
-        .map(|p| LitStr::new(&p.name, proc_macro2::Span::call_site()))
+        .map(|p| {
+            let name = p.name.clone();
+            let desc = attr
+                .descriptions
+                .get(&p.name)
+                .cloned()
+                .unwrap_or_else(|| p.name.clone());
+            let mut schema = json_schema_for_type(&p.ty);
+            if let serde_json::Value::Object(ref mut obj) = schema {
+                obj.insert("description".to_string(), serde_json::Value::String(desc));
+            }
+            (name, schema)
+        })
+        .collect::<serde_json::Map<String, serde_json::Value>>();
+
+    let required_names: Vec<String> = params
+        .iter()
+        .filter(|p| !p.optional)
+        .map(|p| p.name.clone())
         .collect();
 
     // Args struct fields
@@ -98,6 +96,8 @@ pub fn expand_tool(attr: ToolAttr, input: ItemFn) -> syn::Result<TokenStream2> {
         }
     };
 
+    let schema_json = object_schema(schema_properties, required_names);
+    let schema_lit = LitStr::new(&schema_json.to_string(), proc_macro2::Span::call_site());
     let description_lit = LitStr::new(&tool_description, proc_macro2::Span::call_site());
     let fn_name_lit = LitStr::new(&fn_name_str, proc_macro2::Span::call_site());
 
@@ -127,13 +127,13 @@ pub fn expand_tool(attr: ToolAttr, input: ItemFn) -> syn::Result<TokenStream2> {
                 }
 
                 fn definition(&self) -> ::agent_io::llm::ToolDefinition {
-                    let mut __map = serde_json::Map::new();
-                    #(#schema_entries)*
-                    let mut __schema = serde_json::Map::new();
-                    __schema.insert("type".to_string(), serde_json::json!("object"));
-                    __schema.insert("properties".to_string(), serde_json::Value::Object(__map));
-                    __schema.insert("required".to_string(), serde_json::json!([#(#required_names),*]));
-                    ::agent_io::llm::ToolDefinition::new(#fn_name_lit, #description_lit, __schema)
+                    let __schema: serde_json::Value = serde_json::from_str(#schema_lit)
+                        .expect("macro-generated schema must be valid JSON");
+                    ::agent_io::llm::SchemaOptimizer::create_tool_definition(
+                        #fn_name_lit,
+                        #description_lit,
+                        __schema,
+                    )
                 }
 
                 async fn execute(

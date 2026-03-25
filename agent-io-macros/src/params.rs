@@ -2,10 +2,13 @@
 
 use syn::{FnArg, ItemFn, Pat, PatType, ReturnType, Type, punctuated::Punctuated, token::Comma};
 
+use crate::utils::is_optional_type;
+
 /// A single parsed parameter of a `#[tool]` function.
 pub struct ToolParam {
     pub name: String,
     pub ty: Type,
+    pub optional: bool,
 }
 
 /// Extract `ToolParam`s from a function's input list.
@@ -33,9 +36,11 @@ pub fn collect_params(inputs: &Punctuated<FnArg, Comma>) -> syn::Result<Vec<Tool
                         ));
                     }
                 };
+                let ty = *ty.clone();
                 params.push(ToolParam {
                     name,
-                    ty: *ty.clone(),
+                    optional: is_optional_type(&ty),
+                    ty,
                 });
             }
         }
@@ -43,14 +48,34 @@ pub fn collect_params(inputs: &Punctuated<FnArg, Comma>) -> syn::Result<Vec<Tool
     Ok(params)
 }
 
-/// Validate that the function return type is not `()` (i.e. it returns something).
+/// Validate that the function return type is explicit and plausibly `Result<String, _>`.
 pub fn validate_return_type(ret: &ReturnType) -> syn::Result<()> {
     match ret {
         ReturnType::Default => Err(syn::Error::new_spanned(
             ret,
             "#[tool] functions must return `agent_io::Result<String>`",
         )),
-        ReturnType::Type(_, _) => Ok(()),
+        ReturnType::Type(_, ty) => {
+            let Type::Path(tp) = ty.as_ref() else {
+                return Err(syn::Error::new_spanned(
+                    ty,
+                    "#[tool] functions must return `agent_io::Result<String>`",
+                ));
+            };
+            let Some(seg) = tp.path.segments.last() else {
+                return Err(syn::Error::new_spanned(
+                    ty,
+                    "#[tool] functions must return `agent_io::Result<String>`",
+                ));
+            };
+            if seg.ident != "Result" {
+                return Err(syn::Error::new_spanned(
+                    ty,
+                    "#[tool] functions must return `agent_io::Result<String>`",
+                ));
+            }
+            Ok(())
+        }
     }
 }
 

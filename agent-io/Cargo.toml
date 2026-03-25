@@ -50,10 +50,10 @@ async-stream = "0.3"
 dirs = "5"
 
 # Storage
-lancedb = "0.26"
-arrow = "57"
-arrow-array = "57"
-arrow-schema = "57"
+lancedb = { version = "0.26", optional = true }
+arrow = { version = "57", optional = true }
+arrow-array = { version = "57", optional = true }
+arrow-schema = { version = "57", optional = true }
 
 [lib]
 name = "agent_io"
@@ -64,6 +64,7 @@ default = []
 openai = []
 anthropic = []
 google = []
+memory-lancedb = ["dep:lancedb", "dep:arrow", "dep:arrow-array", "dep:arrow-schema"]
 full = ["openai", "anthropic", "google"]
 
 [dev-dependencies]

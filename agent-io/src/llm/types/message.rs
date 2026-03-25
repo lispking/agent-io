@@ -186,6 +186,10 @@ impl Message {
         Message::Tool(ToolMessage::new(tool_call_id, content))
     }
 
+    pub fn developer(content: impl Into<String>) -> Self {
+        Message::Developer(DeveloperMessage::new(content))
+    }
+
     pub fn role(&self) -> &str {
         match self {
             Message::User(_) => "user",

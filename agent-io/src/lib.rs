@@ -1,14 +1,15 @@
-//! # BU Agent SDK
+//! # Agent IO
 //!
 //! A Rust SDK for building AI agents with multi-provider LLM support.
 //!
 //! ## Features
 //!
-//! - Multi-provider LLM support (OpenAI, Anthropic, Google Gemini)
-//! - Tool/function calling with dependency injection
+//! - Multi-provider LLM support (OpenAI, Anthropic, Google Gemini, and OpenAI-compatible providers)
+//! - Tool/function calling with the built-in `#[tool]` macro or manual builders
 //! - Streaming responses with event-based architecture
 //! - Context compaction for long-running conversations
 //! - Token usage tracking and cost calculation
+//! - In-memory memory by default, with optional LanceDB persistence via `memory-lancedb`
 //!
 //! ## Quick Start
 //!

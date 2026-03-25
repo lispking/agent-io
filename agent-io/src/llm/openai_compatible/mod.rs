@@ -10,7 +10,7 @@ mod types;
 use async_trait::async_trait;
 use derive_builder::Builder;
 use futures::StreamExt;
-use reqwest::Client;
+use reqwest::{Client, StatusCode};
 use std::time::Duration;
 
 use crate::llm::{
@@ -52,10 +52,70 @@ pub struct ChatOpenAICompatible {
     pub(super) use_bearer_auth: bool,
 }
 
+pub(crate) struct OpenAICompatibleProviderConfig<'a> {
+    pub provider: &'a str,
+    pub default_base_url: &'a str,
+    pub api_key_env: Option<&'a str>,
+    pub base_url_env: Option<&'a str>,
+    pub use_bearer_auth: bool,
+    pub default_temperature: f32,
+}
+
 impl ChatOpenAICompatible {
     /// Create a builder for configuration
     pub fn builder() -> ChatOpenAICompatibleBuilder {
         ChatOpenAICompatibleBuilder::default()
+    }
+
+    pub(crate) fn build_provider(
+        config: OpenAICompatibleProviderConfig<'_>,
+        model: Option<String>,
+        api_key: Option<String>,
+        base_url: Option<String>,
+        temperature: Option<f32>,
+        max_tokens: Option<u64>,
+    ) -> Result<Self, LlmError> {
+        let model = model.ok_or_else(|| LlmError::Config("model is required".into()))?;
+
+        let api_key = match (api_key, config.api_key_env) {
+            (Some(key), _) => Some(key),
+            (None, Some(env_var)) => std::env::var(env_var).ok(),
+            (None, None) => None,
+        };
+
+        if api_key.is_none() && config.api_key_env.is_some() {
+            return Err(LlmError::Config(format!(
+                "{} not set",
+                config.api_key_env.unwrap_or_default()
+            )));
+        }
+
+        let base_url = base_url
+            .or_else(|| {
+                config
+                    .base_url_env
+                    .and_then(|env_var| std::env::var(env_var).ok())
+            })
+            .unwrap_or_else(|| config.default_base_url.to_string());
+
+        ChatOpenAICompatible::builder()
+            .model(model)
+            .base_url(base_url)
+            .provider(config.provider)
+            .api_key(api_key)
+            .use_bearer_auth(config.use_bearer_auth)
+            .temperature(temperature.unwrap_or(config.default_temperature))
+            .max_completion_tokens(max_tokens)
+            .build()
+    }
+
+    fn map_error_status(status: StatusCode, body: String) -> LlmError {
+        match status {
+            StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => LlmError::Auth(body),
+            StatusCode::NOT_FOUND => LlmError::ModelNotFound(body),
+            StatusCode::TOO_MANY_REQUESTS => LlmError::RateLimit,
+            _ => LlmError::Api(format!("API error ({}): {}", status, body)),
+        }
     }
 
     /// Build the HTTP client
@@ -146,10 +206,10 @@ impl BaseChatModel for ChatOpenAICompatible {
         if !response.status().is_success() {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
-            return Err(LlmError::Api(format!(
-                "{} API error ({}): {}",
-                self.provider, status, body
-            )));
+            return Err(Self::map_error_status(
+                status,
+                format!("{}: {}", self.provider, body),
+            ));
         }
 
         let completion: OpenAICompatibleResponse = response.json().await?;
@@ -182,10 +242,10 @@ impl BaseChatModel for ChatOpenAICompatible {
         if !response.status().is_success() {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
-            return Err(LlmError::Api(format!(
-                "{} API error ({}): {}",
-                self.provider, status, body
-            )));
+            return Err(Self::map_error_status(
+                status,
+                format!("{}: {}", self.provider, body),
+            ));
         }
 
         let stream = response.bytes_stream().filter_map(|result| async move {

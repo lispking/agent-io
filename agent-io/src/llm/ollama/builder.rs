@@ -1,6 +1,9 @@
 //! Ollama Chat Model builder
 
-use crate::llm::{LlmError, openai_compatible::ChatOpenAICompatible};
+use crate::llm::{
+    LlmError,
+    openai_compatible::{ChatOpenAICompatible, OpenAICompatibleProviderConfig},
+};
 
 use super::ChatOllama;
 
@@ -37,23 +40,21 @@ impl ChatOllamaBuilder {
     }
 
     pub fn build(self) -> Result<ChatOllama, LlmError> {
-        let model = self
-            .model
-            .ok_or_else(|| LlmError::Config("model is required".into()))?;
-
-        let base_url = self.base_url.unwrap_or_else(|| {
-            std::env::var("OLLAMA_BASE_URL").unwrap_or_else(|_| OLLAMA_DEFAULT_URL.to_string())
-        });
-
-        let inner = ChatOpenAICompatible::builder()
-            .model(&model)
-            .base_url(&base_url)
-            .provider("ollama")
-            .api_key(None)
-            .use_bearer_auth(false)
-            .temperature(self.temperature.unwrap_or(0.2))
-            .max_completion_tokens(self.max_tokens)
-            .build()?;
+        let inner = ChatOpenAICompatible::build_provider(
+            OpenAICompatibleProviderConfig {
+                provider: "ollama",
+                default_base_url: OLLAMA_DEFAULT_URL,
+                api_key_env: None,
+                base_url_env: Some("OLLAMA_BASE_URL"),
+                use_bearer_auth: false,
+                default_temperature: 0.2,
+            },
+            self.model,
+            None,
+            self.base_url,
+            self.temperature,
+            self.max_tokens,
+        )?;
 
         Ok(ChatOllama { inner })
     }

@@ -1,6 +1,9 @@
 //! DeepSeek Chat Model builder
 
-use crate::llm::{LlmError, openai_compatible::ChatOpenAICompatible};
+use crate::llm::{
+    LlmError,
+    openai_compatible::{ChatOpenAICompatible, OpenAICompatibleProviderConfig},
+};
 
 use super::ChatDeepSeek;
 
@@ -37,23 +40,21 @@ impl ChatDeepSeekBuilder {
     }
 
     pub fn build(self) -> Result<ChatDeepSeek, LlmError> {
-        let model = self
-            .model
-            .ok_or_else(|| LlmError::Config("model is required".into()))?;
-
-        let api_key = self
-            .api_key
-            .or_else(|| std::env::var("DEEPSEEK_API_KEY").ok())
-            .ok_or_else(|| LlmError::Config("DEEPSEEK_API_KEY not set".into()))?;
-
-        let inner = ChatOpenAICompatible::builder()
-            .model(&model)
-            .base_url(DEEPSEEK_URL)
-            .provider("deepseek")
-            .api_key(Some(api_key))
-            .temperature(self.temperature.unwrap_or(0.2))
-            .max_completion_tokens(self.max_tokens)
-            .build()?;
+        let inner = ChatOpenAICompatible::build_provider(
+            OpenAICompatibleProviderConfig {
+                provider: "deepseek",
+                default_base_url: DEEPSEEK_URL,
+                api_key_env: Some("DEEPSEEK_API_KEY"),
+                base_url_env: None,
+                use_bearer_auth: true,
+                default_temperature: 0.2,
+            },
+            self.model,
+            self.api_key,
+            None,
+            self.temperature,
+            self.max_tokens,
+        )?;
 
         Ok(ChatDeepSeek { inner })
     }

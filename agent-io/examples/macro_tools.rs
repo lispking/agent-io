@@ -15,7 +15,7 @@ use futures::{StreamExt, pin_mut};
 // Just write a normal async fn with doc comments.
 // The #[tool] macro generates the Tool impl automatically:
 //   - fn doc comment     -> tool description sent to the LLM
-//   - param doc comments -> JSON schema "description" for each parameter
+//   - #[tool(key = "...")] attributes -> JSON schema "description" for each parameter
 //   - param types        -> JSON schema types (String->"string", f64->"number", etc.)
 //
 // Calling `get_weather()` returns Arc<dyn Tool> ready to hand to the agent.

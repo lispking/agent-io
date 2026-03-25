@@ -7,7 +7,7 @@ use crate::llm::BaseChatModel;
 use crate::memory::MemoryManager;
 use crate::tools::Tool;
 
-use super::config::{AgentConfig, EphemeralConfig};
+use super::config::{AgentConfig, build_ephemeral_config};
 use super::service::Agent;
 
 /// Agent builder
@@ -67,24 +67,7 @@ impl AgentBuilder {
             .llm
             .ok_or_else(|| crate::Error::Config("LLM is required".into()))?;
 
-        // Build ephemeral config from tools
-        let ephemeral_config = self
-            .tools
-            .iter()
-            .filter_map(|t| {
-                let cfg = t.ephemeral();
-                if cfg != crate::tools::EphemeralConfig::None {
-                    let keep_count = match cfg {
-                        crate::tools::EphemeralConfig::Single => 1,
-                        crate::tools::EphemeralConfig::Count(n) => n,
-                        crate::tools::EphemeralConfig::None => 0,
-                    };
-                    Some((t.name().to_string(), EphemeralConfig { keep_count }))
-                } else {
-                    None
-                }
-            })
-            .collect();
+        let ephemeral_config = build_ephemeral_config(&self.tools);
 
         Ok(Agent::new_with_config(
             llm,

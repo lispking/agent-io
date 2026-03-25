@@ -23,8 +23,14 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-agent-io = "0.3"
+agent-io = { version = "0.3", features = ["openai"] }
 tokio = { version = "1", features = ["full"] }
+```
+
+Enable `memory-lancedb` only if you need persistent LanceDB-backed memory:
+
+```toml
+agent-io = { version = "0.3", features = ["openai", "memory-lancedb"] }
 ```
 
 ## Quick Start
@@ -130,6 +136,8 @@ struct WeatherArgs {
 | DeepSeek | `ChatDeepSeek` | - | `DEEPSEEK_API_KEY` |
 | Ollama | `ChatOllama` | - | - |
 
+`memory-lancedb` is a separate optional feature for persistent vector-backed memory.
+
 ## Configuration
 
 ### Agent Builder
@@ -195,8 +203,10 @@ let llm = ChatOpenAICompatible::new("your-model")
 [dependencies.agent-io]
 version = "0.3"
 features = ["openai", "anthropic", "google"]
-# Or use "full" to enable all major providers
-features = ["full"]
+# Optional persistent memory backend
+# features = ["openai", "memory-lancedb"]
+# Or use "full" to enable the bundled provider set
+# features = ["full"]
 ```
 
 ## Examples

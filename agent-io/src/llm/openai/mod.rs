@@ -7,7 +7,7 @@ mod types;
 use async_trait::async_trait;
 use derive_builder::Builder;
 use futures::StreamExt;
-use reqwest::Client;
+use reqwest::{Client, StatusCode};
 use std::time::Duration;
 
 use crate::llm::{
@@ -77,6 +77,15 @@ impl ChatOpenAI {
     fn api_url(&self) -> String {
         let base = self.base_url.as_deref().unwrap_or(OPENAI_BASE_URL);
         format!("{}{}", base.trim_end_matches('/'), CHAT_COMPLETIONS_PATH)
+    }
+
+    fn map_error_status(status: StatusCode, body: String) -> LlmError {
+        match status {
+            StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => LlmError::Auth(body),
+            StatusCode::NOT_FOUND => LlmError::ModelNotFound(body),
+            StatusCode::TOO_MANY_REQUESTS => LlmError::RateLimit,
+            _ => LlmError::Api(format!("OpenAI API error ({}): {}", status, body)),
+        }
     }
 
     /// Build the HTTP client
@@ -173,14 +182,8 @@ impl BaseChatModel for ChatOpenAI {
 
         if !response.status().is_success() {
             let status = response.status();
-            if status.as_u16() == 429 {
-                return Err(LlmError::RateLimit);
-            }
             let body = response.text().await.unwrap_or_default();
-            return Err(LlmError::Api(format!(
-                "OpenAI API error ({}): {}",
-                status, body
-            )));
+            return Err(Self::map_error_status(status, body));
         }
         let body = response.text().await?;
         tracing::debug!("OpenAI raw response: {}", body);
@@ -220,14 +223,8 @@ impl BaseChatModel for ChatOpenAI {
 
         if !response.status().is_success() {
             let status = response.status();
-            if status.as_u16() == 429 {
-                return Err(LlmError::RateLimit);
-            }
             let body = response.text().await.unwrap_or_default();
-            return Err(LlmError::Api(format!(
-                "OpenAI API error ({}): {}",
-                status, body
-            )));
+            return Err(Self::map_error_status(status, body));
         }
 
         let stream = response.bytes_stream().filter_map(|result| async move {

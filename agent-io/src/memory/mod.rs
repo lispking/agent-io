@@ -9,6 +9,7 @@ mod ranker;
 mod store;
 
 pub use backends::in_memory::InMemoryStore;
+#[cfg(feature = "memory-lancedb")]
 pub use backends::lancedb::LanceDbStore;
 pub use buffer::RingBuffer;
 pub use embeddings::{EmbeddingProvider, MockEmbedding, OpenAIEmbedding};
