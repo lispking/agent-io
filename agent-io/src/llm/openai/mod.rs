@@ -16,7 +16,8 @@ use crate::llm::{
 
 use types::*;
 
-const OPENAI_API_URL: &str = "https://api.openai.com/v1/chat/completions";
+const OPENAI_BASE_URL: &str = "https://api.openai.com/v1";
+const CHAT_COMPLETIONS_PATH: &str = "/chat/completions";
 
 /// OpenAI Chat Model
 #[derive(Builder, Clone)]
@@ -36,9 +37,6 @@ pub struct ChatOpenAI {
     /// Maximum completion tokens
     #[builder(default = "Some(4096)")]
     pub(super) max_completion_tokens: Option<u64>,
-    /// Reasoning effort for o1+ models
-    #[builder(default = "ReasoningEffort::Low")]
-    pub(super) reasoning_effort: ReasoningEffort,
     /// HTTP client
     #[builder(setter(skip))]
     pub(super) client: Client,
@@ -52,8 +50,13 @@ impl ChatOpenAI {
     pub fn new(model: impl Into<String>) -> Result<Self, LlmError> {
         let api_key = std::env::var("OPENAI_API_KEY")
             .map_err(|_| LlmError::Config("OPENAI_API_KEY not set".into()))?;
+        let base_url = std::env::var("OPENAI_BASE_URL").ok();
 
-        Self::builder().model(model).api_key(api_key).build()
+        let mut builder = Self::builder().model(model).api_key(api_key);
+        if let Some(url) = base_url {
+            builder = builder.base_url(url);
+        }
+        builder.build()
     }
 
     /// Create a builder for configuration
@@ -71,8 +74,9 @@ impl ChatOpenAI {
     }
 
     /// Get the API URL
-    fn api_url(&self) -> &str {
-        self.base_url.as_deref().unwrap_or(OPENAI_API_URL)
+    fn api_url(&self) -> String {
+        let base = self.base_url.as_deref().unwrap_or(OPENAI_BASE_URL);
+        format!("{}{}", base.trim_end_matches('/'), CHAT_COMPLETIONS_PATH)
     }
 
     /// Build the HTTP client
@@ -132,7 +136,6 @@ impl ChatOpenAIBuilder {
             base_url: self.base_url.clone().flatten(),
             temperature: self.temperature.unwrap_or(0.2),
             max_completion_tokens: self.max_completion_tokens.flatten(),
-            reasoning_effort: self.reasoning_effort.clone().unwrap_or_default(),
         })
     }
 }
@@ -170,14 +173,31 @@ impl BaseChatModel for ChatOpenAI {
 
         if !response.status().is_success() {
             let status = response.status();
+            if status.as_u16() == 429 {
+                return Err(LlmError::RateLimit);
+            }
             let body = response.text().await.unwrap_or_default();
             return Err(LlmError::Api(format!(
                 "OpenAI API error ({}): {}",
                 status, body
             )));
         }
+        let body = response.text().await?;
+        tracing::debug!("OpenAI raw response: {}", body);
 
-        let completion: OpenAIResponse = response.json().await?;
+        // Some proxies always return SSE format regardless of stream=false.
+        // Detect by checking if the body starts with "data:"
+        if body.trim_start().starts_with("data:") {
+            return self.parse_sse_as_completion(&body);
+        }
+
+        let completion: OpenAIResponse = serde_json::from_str(&body).map_err(|e| {
+            LlmError::Api(format!(
+                "Failed to parse response: {}\nBody: {}",
+                e,
+                &body[..body.len().min(500)]
+            ))
+        })?;
         Ok(self.parse_response(completion))
     }
 
@@ -200,6 +220,9 @@ impl BaseChatModel for ChatOpenAI {
 
         if !response.status().is_success() {
             let status = response.status();
+            if status.as_u16() == 429 {
+                return Err(LlmError::RateLimit);
+            }
             let body = response.text().await.unwrap_or_default();
             return Err(LlmError::Api(format!(
                 "OpenAI API error ({}): {}",
@@ -228,6 +251,3 @@ impl BaseChatModel for ChatOpenAI {
             || model_lower.contains("gpt-4.1")
     }
 }
-
-// Re-export ReasoningEffort for public API
-pub use types::ReasoningEffort;

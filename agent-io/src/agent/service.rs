@@ -196,10 +196,9 @@ impl Agent {
 
                 // Build system prompt + messages
                 let mut full_messages = Vec::new();
-                if let Some(ref prompt) = self.config.system_prompt
-                    && step == 0 {
-                        full_messages.push(Message::system(prompt));
-                    }
+                if let Some(ref prompt) = self.config.system_prompt {
+                    full_messages.push(Message::system(prompt));
+                }
                 full_messages.extend(messages);
 
                 // Build tool definitions
@@ -319,8 +318,8 @@ impl Agent {
         tools: Option<Vec<ToolDefinition>>,
         tool_choice: Option<crate::llm::ToolChoice>,
     ) -> Result<ChatCompletion> {
-        let max_retries = 3;
-        let mut delay = std::time::Duration::from_millis(100);
+        let max_retries = 10;
+        let mut delay = std::time::Duration::from_millis(500);
 
         for attempt in 0..=max_retries {
             match llm
@@ -329,6 +328,12 @@ impl Agent {
             {
                 Ok(completion) => return Ok(completion),
                 Err(crate::llm::LlmError::RateLimit) if attempt < max_retries => {
+                    tracing::warn!(
+                        "Rate limit or empty response, retrying in {:?} (attempt {}/{})",
+                        delay,
+                        attempt + 1,
+                        max_retries
+                    );
                     tokio::time::sleep(delay).await;
                     delay *= 2;
                 }

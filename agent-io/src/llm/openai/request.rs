@@ -46,13 +46,6 @@ impl super::ChatOpenAI {
             Some(self.temperature)
         };
 
-        // For reasoning models, add reasoning_effort
-        let reasoning_effort = if self.is_reasoning_model() {
-            Some(self.reasoning_effort.clone())
-        } else {
-            None
-        };
-
         Ok(OpenAIRequest {
             model: self.model.clone(),
             messages: openai_messages,
@@ -60,8 +53,7 @@ impl super::ChatOpenAI {
             tool_choice: tool_choice_value,
             temperature,
             max_completion_tokens: self.max_completion_tokens,
-            reasoning_effort,
-            stream: if stream { Some(true) } else { None },
+            stream: Some(stream),
         })
     }
 

@@ -36,6 +36,17 @@ pub mod observability;
 pub mod tokens;
 pub mod tools;
 
+/// Re-exports needed by the `#[tool]` proc-macro. Not part of the public API.
+#[doc(hidden)]
+pub mod __macro_support {
+    pub use async_trait::async_trait;
+    pub use serde;
+    pub use serde_json;
+}
+
+// Re-export the `#[tool]` attribute macro
+pub use agent_io_macros::tool;
+
 pub use agent::{Agent, AgentEvent};
 pub use llm::BaseChatModel;
 pub use memory::{EmbeddingProvider, InMemoryStore, MemoryManager, MemoryStore};

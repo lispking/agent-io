@@ -17,7 +17,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt::init();
 
     // Create LLM
-    let llm = ChatOpenAI::new("gpt-4o-mini")?;
+    let llm = ChatOpenAI::new("gpt-5.4-mini")?;
 
     // Create tools
     let weather_tool = create_weather_tool();

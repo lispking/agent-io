@@ -10,8 +10,9 @@ checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 
 [[package]]
 name = "agent-io"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
+ "agent-io-macros",
  "anyhow",
  "arrow",
  "arrow-array",
@@ -27,8 +28,6 @@ dependencies = [
  "lancedb",
  "once_cell",
  "pin-project-lite",
- "proc-macro2",
- "quote",
  "reqwest",
  "reqwest-eventsource",
  "secrecy",
@@ -36,7 +35,6 @@ dependencies = [
  "serde_json",
  "serde_with",
  "strum",
- "syn 2.0.117",
  "thiserror 2.0.18",
  "tokio",
  "tokio-stream",
@@ -47,6 +45,15 @@ dependencies = [
  "tracing-subscriber",
  "uuid",
  "wiremock",
+]
+
+[[package]]
+name = "agent-io-macros"
+version = "0.3.1"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
 ]
 
 [[package]]

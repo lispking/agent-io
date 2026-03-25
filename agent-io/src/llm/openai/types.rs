@@ -4,17 +4,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::llm::ToolCall;
 
-/// Reasoning effort levels for o1+ models
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[serde(rename_all = "lowercase")]
-pub enum ReasoningEffort {
-    Low,
-    Medium,
-    High,
-    #[default]
-    Minimal,
-}
-
 /// OpenAI API request
 #[derive(Serialize)]
 pub struct OpenAIRequest {
@@ -28,8 +17,6 @@ pub struct OpenAIRequest {
     pub temperature: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_completion_tokens: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub reasoning_effort: Option<ReasoningEffort>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stream: Option<bool>,
 }

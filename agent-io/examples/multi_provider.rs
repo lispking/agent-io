@@ -30,7 +30,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     #[cfg(feature = "openai")]
     {
         println!("=== OpenAI ===");
-        let llm = ChatOpenAI::new("gpt-4o-mini")?;
+        let llm = ChatOpenAI::new("gpt-5.4-mini")?;
         let agent = Agent::builder().with_llm(Arc::new(llm)).build()?;
 
         let response = agent.query(prompt).await?;
@@ -41,7 +41,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     #[cfg(feature = "anthropic")]
     {
         println!("=== Anthropic ===");
-        let llm = ChatAnthropic::new("claude-3-5-sonnet-20241022")?;
+        let llm = ChatAnthropic::new("claude-sonnet-4-6")?;
         let agent = Agent::builder().with_llm(Arc::new(llm)).build()?;
 
         let response = agent.query(prompt).await?;
