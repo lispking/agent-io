@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use futures::{Stream, StreamExt};
+use llm_resilience::CircuitBreaker;
 use tokio::sync::RwLock;
 use tracing::debug;
 
@@ -36,6 +37,23 @@ pub struct Agent {
     ephemeral_config: HashMap<String, EphemeralConfig>,
     /// Memory manager (optional)
     memory: Option<Arc<RwLock<MemoryManager>>>,
+    /// Circuit breaker around LLM calls. Clones share state, so one breaker
+    /// can be shared by every agent that talks to the same provider.
+    breaker: CircuitBreaker,
+}
+
+/// Longest single backoff sleep between LLM retries.
+pub(crate) const MAX_RETRY_DELAY: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// Double the backoff, but never past [`MAX_RETRY_DELAY`].
+pub(crate) fn next_retry_delay(delay: std::time::Duration) -> std::time::Duration {
+    (delay * 2).min(MAX_RETRY_DELAY)
+}
+
+/// Default breaker for LLM calls: opens after 5 consecutive rate limits,
+/// lets one probe through after 30s, and closes when that probe succeeds.
+pub fn default_llm_circuit_breaker() -> CircuitBreaker {
+    CircuitBreaker::new(5, 1.0, std::time::Duration::from_secs(30))
 }
 
 impl Agent {
@@ -51,7 +69,20 @@ impl Agent {
             usage: Arc::new(RwLock::new(UsageSummary::new())),
             ephemeral_config,
             memory: None,
+            breaker: default_llm_circuit_breaker(),
         }
+    }
+
+    /// Use a specific circuit breaker for LLM calls (for example one shared
+    /// with other agents that call the same provider).
+    pub fn with_circuit_breaker(mut self, breaker: CircuitBreaker) -> Self {
+        self.breaker = breaker;
+        self
+    }
+
+    /// The circuit breaker guarding this agent's LLM calls.
+    pub fn circuit_breaker(&self) -> &CircuitBreaker {
+        &self.breaker
     }
 
     /// Create an agent builder
@@ -72,6 +103,7 @@ impl Agent {
         config: AgentConfig,
         ephemeral_config: HashMap<String, EphemeralConfig>,
         memory: Option<Arc<RwLock<MemoryManager>>>,
+        breaker: Option<CircuitBreaker>,
     ) -> Self {
         Self {
             llm,
@@ -81,6 +113,7 @@ impl Agent {
             usage: Arc::new(RwLock::new(UsageSummary::new())),
             ephemeral_config,
             memory,
+            breaker: breaker.unwrap_or_else(default_llm_circuit_breaker),
         }
     }
 
@@ -215,6 +248,7 @@ impl Agent {
                 // Call LLM with retry
                 let completion = match Self::call_llm_with_retry(
                     self.llm.as_ref(),
+                    &self.breaker,
                     &full_messages,
                     tool_defs.as_deref(),
                     Some(&tool_choice),
@@ -317,9 +351,16 @@ impl Agent {
         }
     }
 
-    /// Call LLM with exponential backoff retry
+    /// Call LLM with capped exponential backoff, behind a circuit breaker.
+    ///
+    /// Each rate limit counts as a failure on `breaker`. Once the provider has
+    /// rate limited enough consecutive calls the breaker opens and this
+    /// returns at once instead of sleeping, so a provider outage costs
+    /// seconds rather than minutes per call, and agents sharing the breaker
+    /// stop hammering the provider together.
     async fn call_llm_with_retry(
         llm: &dyn BaseChatModel,
+        breaker: &CircuitBreaker,
         messages: &[Message],
         tools: Option<&[ToolDefinition]>,
         tool_choice: Option<&crate::llm::ToolChoice>,
@@ -328,6 +369,10 @@ impl Agent {
         let mut delay = std::time::Duration::from_millis(500);
 
         for attempt in 0..=max_retries {
+            let Some(permit) = breaker.try_acquire() else {
+                return Err(Self::circuit_open_error(llm, breaker));
+            };
+
             let request_messages = messages.to_vec();
             let request_tools = tools.map(|value| value.to_vec());
             let request_tool_choice = tool_choice.cloned();
@@ -336,8 +381,19 @@ impl Agent {
                 .invoke(request_messages, request_tools, request_tool_choice)
                 .await
             {
-                Ok(completion) => return Ok(completion),
-                Err(crate::llm::LlmError::RateLimit) if attempt < max_retries => {
+                Ok(completion) => {
+                    permit.success();
+                    return Ok(completion);
+                }
+                Err(crate::llm::LlmError::RateLimit) => {
+                    permit.failure();
+                    if breaker.is_open_sync() {
+                        // Do not sleep toward a retry the breaker will refuse.
+                        return Err(Self::circuit_open_error(llm, breaker));
+                    }
+                    if attempt == max_retries {
+                        return Err(Error::Llm(crate::llm::LlmError::RateLimit));
+                    }
                     tracing::warn!(
                         "Rate limit or empty response, retrying in {:?} (attempt {}/{})",
                         delay,
@@ -345,13 +401,24 @@ impl Agent {
                         max_retries
                     );
                     tokio::time::sleep(delay).await;
-                    delay *= 2;
+                    delay = next_retry_delay(delay);
                 }
+                // Other errors (auth, bad request, config) say nothing about
+                // provider load: drop the permit without recording.
                 Err(e) => return Err(Error::Llm(e)),
             }
         }
 
         Err(Error::Agent("Max retries exceeded".into()))
+    }
+
+    fn circuit_open_error(llm: &dyn BaseChatModel, breaker: &CircuitBreaker) -> Error {
+        let wait = breaker.retry_after_sync().unwrap_or_default();
+        Error::Agent(format!(
+            "LLM circuit breaker open after repeated rate limits from {}; next probe in {:?}",
+            llm.provider(),
+            wait
+        ))
     }
 
     /// Get usage summary
@@ -441,5 +508,112 @@ impl Agent {
     /// Get memory manager reference
     pub fn get_memory(&self) -> Option<&Arc<RwLock<MemoryManager>>> {
         self.memory.as_ref()
+    }
+}
+
+#[cfg(test)]
+mod retry_tests {
+    use super::*;
+    use crate::llm::{ChatStream, LlmError, ToolChoice};
+    use async_trait::async_trait;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::Duration;
+
+    /// Returns `RateLimit` for the first `fail_first` calls, then succeeds.
+    struct FlakyLlm {
+        calls: AtomicUsize,
+        fail_first: usize,
+    }
+
+    impl FlakyLlm {
+        fn new(fail_first: usize) -> Self {
+            Self {
+                calls: AtomicUsize::new(0),
+                fail_first,
+            }
+        }
+        fn calls(&self) -> usize {
+            self.calls.load(Ordering::SeqCst)
+        }
+    }
+
+    #[async_trait]
+    impl BaseChatModel for FlakyLlm {
+        fn model(&self) -> &str {
+            "flaky"
+        }
+        fn provider(&self) -> &str {
+            "test"
+        }
+        async fn invoke(
+            &self,
+            _messages: Vec<Message>,
+            _tools: Option<Vec<ToolDefinition>>,
+            _tool_choice: Option<ToolChoice>,
+        ) -> std::result::Result<ChatCompletion, LlmError> {
+            let n = self.calls.fetch_add(1, Ordering::SeqCst);
+            if n < self.fail_first {
+                Err(LlmError::RateLimit)
+            } else {
+                Ok(ChatCompletion::text("ok"))
+            }
+        }
+        async fn invoke_stream(
+            &self,
+            _messages: Vec<Message>,
+            _tools: Option<Vec<ToolDefinition>>,
+            _tool_choice: Option<ToolChoice>,
+        ) -> std::result::Result<ChatStream, LlmError> {
+            Err(LlmError::Config("not used".into()))
+        }
+    }
+
+    #[test]
+    fn backoff_is_capped() {
+        // Old schedule: 500ms doubling 10 times, last sleep 256s, ~8.5 min total.
+        let mut delay = Duration::from_millis(500);
+        let mut total = Duration::ZERO;
+        for _ in 0..10 {
+            total += delay;
+            delay = next_retry_delay(delay);
+        }
+        assert_eq!(delay, MAX_RETRY_DELAY);
+        assert!(total <= Duration::from_secs(200), "total backoff {total:?}");
+    }
+
+    #[tokio::test]
+    async fn retries_through_transient_rate_limit() {
+        let llm = FlakyLlm::new(1);
+        let breaker = default_llm_circuit_breaker();
+        let out = Agent::call_llm_with_retry(&llm, &breaker, &[], None, None)
+            .await
+            .expect("second attempt succeeds");
+        assert_eq!(out.content.as_deref(), Some("ok"));
+        assert_eq!(llm.calls(), 2);
+        assert!(breaker.is_closed_sync());
+    }
+
+    #[tokio::test]
+    async fn breaker_opens_and_later_calls_fail_fast() {
+        let llm = FlakyLlm::new(usize::MAX);
+        let breaker = CircuitBreaker::new(2, 1.0, Duration::from_secs(60));
+
+        let started = std::time::Instant::now();
+        let err = Agent::call_llm_with_retry(&llm, &breaker, &[], None, None)
+            .await
+            .unwrap_err();
+        // Two attempts and one 500ms sleep, not ten attempts and minutes of sleep.
+        assert_eq!(llm.calls(), 2);
+        assert!(started.elapsed() < Duration::from_secs(5));
+        assert!(err.to_string().contains("circuit breaker open"), "{err}");
+        assert!(breaker.is_open_sync());
+
+        // A second call (another step, or another agent sharing the breaker)
+        // does not reach the provider at all while the breaker is open.
+        let err = Agent::call_llm_with_retry(&llm, &breaker, &[], None, None)
+            .await
+            .unwrap_err();
+        assert_eq!(llm.calls(), 2);
+        assert!(err.to_string().contains("circuit breaker open"), "{err}");
     }
 }
