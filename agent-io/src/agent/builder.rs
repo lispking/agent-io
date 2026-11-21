@@ -6,6 +6,7 @@ use crate::Result;
 use crate::llm::BaseChatModel;
 use crate::memory::MemoryManager;
 use crate::tools::Tool;
+use llm_resilience::CircuitBreaker;
 
 use super::config::{AgentConfig, build_ephemeral_config};
 use super::service::Agent;
@@ -17,6 +18,7 @@ pub struct AgentBuilder {
     tools: Vec<Arc<dyn Tool>>,
     config: Option<AgentConfig>,
     memory: Option<Arc<RwLock<MemoryManager>>>,
+    breaker: Option<CircuitBreaker>,
 }
 
 use tokio::sync::RwLock;
@@ -62,6 +64,14 @@ impl AgentBuilder {
         self
     }
 
+    /// Guard LLM calls with this circuit breaker. Clones share state, so
+    /// passing the same breaker to several agents makes them back off together
+    /// when their provider is rate limiting.
+    pub fn with_circuit_breaker(mut self, breaker: CircuitBreaker) -> Self {
+        self.breaker = Some(breaker);
+        self
+    }
+
     pub fn build(self) -> Result<Agent> {
         let llm = self
             .llm
@@ -75,6 +85,7 @@ impl AgentBuilder {
             self.config.unwrap_or_default(),
             ephemeral_config,
             self.memory,
+            self.breaker,
         ))
     }
 }
